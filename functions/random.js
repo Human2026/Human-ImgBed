@@ -1,3 +1,8 @@
+import { fetchOthersConfig } from "./utils/sysConfig";
+
+let othersConfig = {};
+let allowRandom = false;
+
 export async function onRequest(context) {
     // Contents of context object
     const {
@@ -10,8 +15,12 @@ export async function onRequest(context) {
     } = context;
     const requestUrl = new URL(request.url);
 
+    // 读取其他设置
+    othersConfig = await fetchOthersConfig(env);
+    allowRandom = othersConfig.randomImageAPI.enabled;
+
     // 检查是否启用了随机图功能
-    if (env.AllowRandom != "true") {
+    if (allowRandom != true) {
         return new Response(JSON.stringify({ error: "Random is disabled" }), { status: 403 });
     }
 
@@ -28,8 +37,12 @@ export async function onRequest(context) {
         fileType = fileType.split(',');
     }
 
+    // 读取指定文件夹
+    const paramDir = requestUrl.searchParams.get('dir') || '';
+    const dir = paramDir.replace(/^\/+/, '').replace(/\/{2,}/g, '/').replace(/\/$/, '');
+
     // 调用randomFileList接口，读取KV数据库中的所有记录
-    let allRecords = await getRandomFileList(env, requestUrl);
+    let allRecords = await getRandomFileList(env, requestUrl, dir);
 
     // 筛选出符合fileType要求的记录
     allRecords = allRecords.filter(item => { return fileType.some(type => item.FileType.includes(type)) });
@@ -73,10 +86,10 @@ export async function onRequest(context) {
     }
 }
 
-async function getRandomFileList(env, url) {
+async function getRandomFileList(env, url, dir) {
     // 检查缓存中是否有记录，有则直接返回
     const cache = caches.default;
-    const cacheRes = await cache.match(`${url.origin}/api/randomFileList`);
+    const cacheRes = await cache.match(`${url.origin}/api/randomFileList?dir=${dir}`);
     if (cacheRes) {
         return JSON.parse(await cacheRes.text());
     }
@@ -86,6 +99,7 @@ async function getRandomFileList(env, url) {
 
     do {
         const records = await env.img_url.list({
+            prefix: dir,
             limit: 1000,
             cursor,
         });
@@ -106,7 +120,7 @@ async function getRandomFileList(env, url) {
     });
 
     // 缓存结果，缓存时间为24小时
-    await cache.put(`${url.origin}/api/randomFileList`, new Response(JSON.stringify(allRecords), {
+    await cache.put(`${url.origin}/api/randomFileList?dir=${dir}`, new Response(JSON.stringify(allRecords), {
         headers: {
             "Content-Type": "application/json",
         }
